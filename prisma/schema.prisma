@@ -1,0 +1,209 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  OWNER
+  PROJECT_MANAGER
+  SITE_ENGINEER
+  QS_ENGINEER
+  ACCOUNTANT
+}
+
+enum IPCStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED_PARTIAL
+  APPROVED_FULL
+  REJECTED
+  PAID
+}
+
+enum ChangeOrderStatus {
+  PENDING_SUBMISSION
+  SUBMITTED_TO_MAIN_CON
+  APPROVED
+  REJECTED
+}
+
+// 1. منشأة مقاول الباطن
+model Company {
+  id        String   @id @default(uuid())
+  crNumber  String   @unique
+  vatNumber String   @unique
+  nameAr    String
+  nameEn    String?
+  logoUrl   String?
+  phone     String
+  email     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users    User[]
+  projects Project[]
+}
+
+// 2. المستخدمون وإدارة الصلاحيات (RBAC)
+model User {
+  id           String   @id @default(uuid())
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fullName     String
+  email        String   @unique
+  phone        String
+  passwordHash String
+  role         UserRole @default(SITE_ENGINEER)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  progressLogs ProgressLog[]
+  createdIPCs  IPC[]         @relation("IPCCreator")
+}
+
+// 3. المشاريع والشروط المالية
+model Project {
+  id                  String    @id @default(uuid())
+  companyId           String
+  company             Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name                String
+  contractNumber      String
+  mainContractorName  String
+  mainContractorEmail String
+  mainContractorPhone String?
+
+  contractValue      Decimal @db.Decimal(14, 2)
+  advancePaymentRate Decimal @default(10.00) @db.Decimal(5, 2)
+  advancePaymentPaid Decimal @default(0.00) @db.Decimal(14, 2)
+  retentionRate      Decimal @default(10.00) @db.Decimal(5, 2)
+  vatRate            Decimal @default(15.00) @db.Decimal(5, 2)
+
+  startDate DateTime
+  endDate   DateTime?
+  createdAt DateTime  @default(now())
+
+  boqItems     BOQItem[]
+  changeOrders ChangeOrder[]
+  ipcs         IPC[]
+}
+
+// 4. بنود جدول الكميات (BOQ)
+model BOQItem {
+  id               String  @id @default(uuid())
+  projectId        String
+  project          Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  itemCode         String
+  description      String
+  unit             String
+  contractQuantity Decimal @db.Decimal(12, 3)
+  unitRate         Decimal @db.Decimal(12, 2)
+  totalAmount      Decimal @db.Decimal(14, 2)
+
+  progressLogs ProgressLog[]
+  ipcDetails   IPCDetail[]
+}
+
+// 5. سجل الإنجاز الميداني
+model ProgressLog {
+  id               String   @id @default(uuid())
+  boqItemId        String
+  boqItem          BOQItem  @relation(fields: [boqItemId], references: [id], onDelete: Cascade)
+  loggedById       String
+  loggedBy         User     @relation(fields: [loggedById], references: [id])
+  quantityExecuted Decimal  @db.Decimal(12, 3)
+  logDate          DateTime @default(now())
+  notes            String?
+
+  evidences EvidenceMedia[]
+}
+
+// 6. وسائط الإثبات الميداني
+model EvidenceMedia {
+  id            String      @id @default(uuid())
+  progressLogId String
+  progressLog   ProgressLog @relation(fields: [progressLogId], references: [id], onDelete: Cascade)
+  mediaType     String // IMAGE / PDF_WIR / LAB_REPORT
+  fileUrl       String
+  thumbnailUrl  String?
+  latitude      Float?
+  longitude     Float?
+  capturedAt    DateTime?
+  createdAt     DateTime    @default(now())
+}
+
+// 7. أوامر التغيير
+model ChangeOrder {
+  id              String            @id @default(uuid())
+  projectId       String
+  project         Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  coNumber        String
+  title           String
+  description     String
+  estimatedAmount Decimal           @db.Decimal(14, 2)
+  approvedAmount  Decimal?          @db.Decimal(14, 2)
+  status          ChangeOrderStatus @default(PENDING_SUBMISSION)
+  approvalDocUrl  String?
+  createdAt       DateTime          @default(now())
+}
+
+// 8. سجل المستخلص الجاري (IPC Master)
+model IPC {
+  id             String    @id @default(uuid())
+  projectId      String
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ipcNumber      Int
+  periodStart    DateTime
+  periodEnd      DateTime
+  submissionDate DateTime?
+  status         IPCStatus @default(DRAFT)
+
+  totalPreviousWork   Decimal @default(0.00) @db.Decimal(14, 2)
+  totalCurrentWork    Decimal @default(0.00) @db.Decimal(14, 2)
+  totalCumulativeWork Decimal @default(0.00) @db.Decimal(14, 2)
+
+  advanceDeduction   Decimal @default(0.00) @db.Decimal(14, 2)
+  retentionDeduction Decimal @default(0.00) @db.Decimal(14, 2)
+  otherPenalties     Decimal @default(0.00) @db.Decimal(14, 2)
+
+  netBeforeVat Decimal @default(0.00) @db.Decimal(14, 2)
+  vatAmount    Decimal @default(0.00) @db.Decimal(14, 2)
+  totalPayable Decimal @default(0.00) @db.Decimal(14, 2)
+
+  reviewerAccessToken String  @unique @default(uuid())
+  reviewerNotes       String?
+  dossierPdfUrl       String?
+
+  createdById String
+  createdBy   User     @relation("IPCCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  details IPCDetail[]
+}
+
+// 9. تفاصيل بنود المستخلص
+model IPCDetail {
+  id        String  @id @default(uuid())
+  ipcId     String
+  ipc       IPC     @relation(fields: [ipcId], references: [id], onDelete: Cascade)
+  boqItemId String
+  boqItem   BOQItem @relation(fields: [boqItemId], references: [id])
+
+  prevQty      Decimal @db.Decimal(12, 3)
+  currQty      Decimal @db.Decimal(12, 3)
+  totalQty     Decimal @db.Decimal(12, 3)
+  remainingQty Decimal @db.Decimal(12, 3)
+
+  currAmount  Decimal @db.Decimal(14, 2)
+  totalAmount Decimal @db.Decimal(14, 2)
+
+  reviewerApprovedQty Decimal? @db.Decimal(12, 3)
+  isApproved          Boolean?
+  rejectionReason     String?
+}
